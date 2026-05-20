@@ -1,0 +1,1256 @@
+<!DOCTYPE html>
+<html lang="he" dir="rtl">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width,initial-scale=1.0">
+<title>לחמן — מונדיאל 2026</title>
+<link href="https://fonts.googleapis.com/css2?family=Heebo:wght@300;400;500;600;700;800;900&family=Rubik:wght@400;500;600;700;800;900&display=swap" rel="stylesheet">
+
+<!-- Firebase -->
+<script type="module">
+import { initializeApp } from "https://www.gstatic.com/firebasejs/10.12.0/firebase-app.js";
+import { getFirestore, doc, setDoc, getDoc, getDocs, collection, query, where, orderBy, onSnapshot, serverTimestamp, updateDoc, addDoc, deleteDoc } from "https://www.gstatic.com/firebasejs/10.12.0/firebase-firestore.js";
+import { getAuth, createUserWithEmailAndPassword, signInWithEmailAndPassword, signOut, onAuthStateChanged, updatePassword } from "https://www.gstatic.com/firebasejs/10.12.0/firebase-auth.js";
+
+const firebaseConfig = {
+  apiKey: "AIzaSyADrSdsxqfeuBRptCBngGg0CfL78Tn8CiE",
+  authDomain: "lachman-2026.firebaseapp.com",
+  projectId: "lachman-2026",
+  storageBucket: "lachman-2026.firebasestorage.app",
+  messagingSenderId: "606874182740",
+  appId: "1:606874182740:web:48b42d2dfe7c6c7e10f9c1",
+  measurementId: "G-8XR8BLH0KV"
+};
+
+const app = initializeApp(firebaseConfig);
+const db = getFirestore(app);
+const auth = getAuth(app);
+
+// ═══════════════════════════════════════════
+// DATA — 48 Teams with flags
+// ═══════════════════════════════════════════
+const TEAMS = {
+  'Mexico':{'flag':'🇲🇽','group':'A'},'South Korea':{'flag':'🇰🇷','group':'A'},'South Africa':{'flag':'🇿🇦','group':'A'},'Czechia':{'flag':'🇨🇿','group':'A'},
+  'Canada':{'flag':'🇨🇦','group':'B'},'Switzerland':{'flag':'🇨🇭','group':'B'},'Qatar':{'flag':'🇶🇦','group':'B'},'Bosnia & Herz.':{'flag':'🇧🇦','group':'B'},
+  'Brazil':{'flag':'🇧🇷','group':'C'},'Morocco':{'flag':'🇲🇦','group':'C'},'Scotland':{'flag':'🏴󠁧󠁢󠁳󠁣󠁴󠁿','group':'C'},'Haiti':{'flag':'🇭🇹','group':'C'},
+  'USA':{'flag':'🇺🇸','group':'D'},'Paraguay':{'flag':'🇵🇾','group':'D'},'Australia':{'flag':'🇦🇺','group':'D'},'Türkiye':{'flag':'🇹🇷','group':'D'},
+  'Germany':{'flag':'🇩🇪','group':'E'},'Curaçao':{'flag':'🇨🇼','group':'E'},"Côte d'Ivoire":{'flag':'🇨🇮','group':'E'},'Ecuador':{'flag':'🇪🇨','group':'E'},
+  'Netherlands':{'flag':'🇳🇱','group':'F'},'Japan':{'flag':'🇯🇵','group':'F'},'Tunisia':{'flag':'🇹🇳','group':'F'},'Sweden':{'flag':'🇸🇪','group':'F'},
+  'Belgium':{'flag':'🇧🇪','group':'G'},'Egypt':{'flag':'🇪🇬','group':'G'},'Iran':{'flag':'🇮🇷','group':'G'},'New Zealand':{'flag':'🇳🇿','group':'G'},
+  'Spain':{'flag':'🇪🇸','group':'H'},'Cape Verde':{'flag':'🇨🇻','group':'H'},'Saudi Arabia':{'flag':'🇸🇦','group':'H'},'Uruguay':{'flag':'🇺🇾','group':'H'},
+  'France':{'flag':'🇫🇷','group':'I'},'Senegal':{'flag':'🇸🇳','group':'I'},'Iraq':{'flag':'🇮🇶','group':'I'},'Norway':{'flag':'🇳🇴','group':'I'},
+  'Argentina':{'flag':'🇦🇷','group':'J'},'Algeria':{'flag':'🇩🇿','group':'J'},'Austria':{'flag':'🇦🇹','group':'J'},'Jordan':{'flag':'🇯🇴','group':'J'},
+  'Portugal':{'flag':'🇵🇹','group':'K'},'Colombia':{'flag':'🇨🇴','group':'K'},'Uzbekistan':{'flag':'🇺🇿','group':'K'},'DR Congo':{'flag':'🇨🇩','group':'K'},
+  'England':{'flag':'🏴󠁧󠁢󠁥󠁮󠁧󠁿','group':'L'},'Croatia':{'flag':'🇭🇷','group':'L'},'Ghana':{'flag':'🇬🇭','group':'L'},'Panama':{'flag':'🇵🇦','group':'L'},
+};
+
+const TEAM_NAMES = Object.keys(TEAMS);
+
+// ═══════════════════════════════════════════
+// APP STATE
+// ═══════════════════════════════════════════
+let currentUser = null;
+let currentUserData = null;
+let currentPage = 'login';
+let matchesCache = [];
+let unsubLeaderboard = null;
+let unsubMatches = null;
+let countdownTimers = {};
+
+// ═══════════════════════════════════════════
+// AUTH
+// ═══════════════════════════════════════════
+onAuthStateChanged(auth, async (user) => {
+  if (user) {
+    currentUser = user;
+    const snap = await getDoc(doc(db, 'users', user.uid));
+    if (snap.exists()) {
+      currentUserData = snap.data();
+      if (currentUserData.mustChangePassword) {
+        showPage('change-password');
+      } else if (currentUserData.isAdmin) {
+        showPage('admin');
+      } else {
+        showPage('main');
+      }
+    }
+  } else {
+    currentUser = null;
+    currentUserData = null;
+    showPage('login');
+  }
+});
+
+async function login() {
+  const email = document.getElementById('login-email').value.trim();
+  const pass = document.getElementById('login-pass').value;
+  const err = document.getElementById('login-err');
+  err.textContent = '';
+  try {
+    await signInWithEmailAndPassword(auth, email, pass);
+  } catch(e) {
+    err.textContent = 'אימייל או סיסמה שגויים';
+  }
+}
+
+async function logout() {
+  if (unsubLeaderboard) unsubLeaderboard();
+  if (unsubMatches) unsubMatches();
+  await signOut(auth);
+}
+
+async function changePassword() {
+  const newPass = document.getElementById('new-pass').value;
+  const confirm = document.getElementById('confirm-pass').value;
+  const err = document.getElementById('cp-err');
+  if (newPass.length < 6) { err.textContent = 'סיסמה חייבת להיות לפחות 6 תווים'; return; }
+  if (newPass !== confirm) { err.textContent = 'הסיסמאות לא תואמות'; return; }
+  try {
+    await updatePassword(auth.currentUser, newPass);
+    await updateDoc(doc(db, 'users', currentUser.uid), { mustChangePassword: false });
+    currentUserData.mustChangePassword = false;
+    showPage('main');
+  } catch(e) {
+    err.textContent = 'שגיאה בשינוי הסיסמה';
+  }
+}
+
+// ═══════════════════════════════════════════
+// PAGES
+// ═══════════════════════════════════════════
+function showPage(page) {
+  currentPage = page;
+  document.getElementById('app').innerHTML = '';
+  if (page === 'login') renderLogin();
+  else if (page === 'change-password') renderChangePassword();
+  else if (page === 'main') renderMain('matches');
+  else if (page === 'admin') renderAdmin('matches');
+}
+
+// ═══════════════════════════════════════════
+// LOGIN PAGE
+// ═══════════════════════════════════════════
+function renderLogin() {
+  document.getElementById('app').innerHTML = `
+    <div class="login-page">
+      <div class="login-card">
+        <div class="login-logo">
+          <div class="login-trophy">🏆</div>
+          <h1 class="login-title">לחמן</h1>
+          <p class="login-sub">אין לך מושג — מונדיאל 2026</p>
+        </div>
+        <div class="login-form">
+          <div class="field">
+            <label>אימייל</label>
+            <input id="login-email" type="email" placeholder="your@email.com" dir="ltr">
+          </div>
+          <div class="field">
+            <label>סיסמה</label>
+            <input id="login-pass" type="password" placeholder="••••••••" dir="ltr" onkeydown="if(event.key==='Enter')window.login()">
+          </div>
+          <p id="login-err" class="err-msg"></p>
+          <button class="btn-primary" onclick="window.login()">כניסה</button>
+        </div>
+      </div>
+    </div>`;
+}
+
+// ═══════════════════════════════════════════
+// CHANGE PASSWORD PAGE
+// ═══════════════════════════════════════════
+function renderChangePassword() {
+  document.getElementById('app').innerHTML = `
+    <div class="login-page">
+      <div class="login-card">
+        <div class="login-logo">
+          <div class="login-trophy">🔐</div>
+          <h1 class="login-title">שנה סיסמה</h1>
+          <p class="login-sub">בחר סיסמה חדשה לחשבונך</p>
+        </div>
+        <div class="login-form">
+          <div class="field">
+            <label>סיסמה חדשה</label>
+            <input id="new-pass" type="password" placeholder="לפחות 6 תווים" dir="ltr">
+          </div>
+          <div class="field">
+            <label>אימות סיסמה</label>
+            <input id="confirm-pass" type="password" placeholder="הקלד שוב" dir="ltr">
+          </div>
+          <p id="cp-err" class="err-msg"></p>
+          <button class="btn-primary" onclick="window.changePassword()">שמור סיסמה</button>
+        </div>
+      </div>
+    </div>`;
+}
+
+// ═══════════════════════════════════════════
+// MAIN APP (User)
+// ═══════════════════════════════════════════
+function renderMain(tab) {
+  const tabs = [
+    {id:'matches', label:'⚽ משחקים'},
+    {id:'leaderboard', label:'🏆 טבלה'},
+    {id:'topscorer', label:'⭐ כובש'},
+    {id:'champion', label:'🥇 אלוף'},
+    {id:'profile', label:'👤 פרופיל'},
+  ];
+  document.getElementById('app').innerHTML = `
+    <div class="app-shell">
+      <header class="app-header">
+        <div class="header-brand">
+          <span class="header-trophy">🏆</span>
+          <div>
+            <div class="header-title">לחמן — מונדיאל 2026</div>
+            <div class="header-user">שלום, ${currentUserData?.displayName || ''}</div>
+          </div>
+        </div>
+        <div class="header-score">
+          <span class="score-num" id="header-score">0</span>
+          <span class="score-lbl">נק'</span>
+        </div>
+      </header>
+      <nav class="app-nav">
+        ${tabs.map(t=>`<button class="nav-btn ${tab===t.id?'active':''}" onclick="window.switchTab('${t.id}')">${t.label}</button>`).join('')}
+      </nav>
+      <main class="app-main" id="app-main"></main>
+    </div>`;
+  switchTab(tab);
+  loadUserScore();
+}
+
+async function loadUserScore() {
+  if (!currentUser) return;
+  const snap = await getDoc(doc(db, 'users', currentUser.uid));
+  if (snap.exists()) {
+    const score = snap.data().totalScore || 0;
+    const el = document.getElementById('header-score');
+    if (el) el.textContent = score.toFixed(1);
+  }
+}
+
+function switchTab(tab) {
+  document.querySelectorAll('.nav-btn').forEach(b => b.classList.remove('active'));
+  document.querySelectorAll('.nav-btn').forEach(b => {
+    if (b.textContent.includes(tab === 'matches' ? 'משחקים' : tab === 'leaderboard' ? 'טבלה' : tab === 'topscorer' ? 'כובש' : tab === 'champion' ? 'אלוף' : 'פרופיל')) b.classList.add('active');
+  });
+  if (tab === 'matches') renderMatchesTab();
+  else if (tab === 'leaderboard') renderLeaderboardTab();
+  else if (tab === 'topscorer') renderTopScorerTab();
+  else if (tab === 'champion') renderChampionTab();
+  else if (tab === 'profile') renderProfileTab();
+}
+window.switchTab = switchTab;
+
+// ═══════════════════════════════════════════
+// MATCHES TAB
+// ═══════════════════════════════════════════
+async function renderMatchesTab() {
+  const main = document.getElementById('app-main');
+  main.innerHTML = '<div class="loading">טוען משחקים...</div>';
+
+  const snap = await getDocs(query(collection(db, 'matches'), orderBy('kickoff', 'asc')));
+  matchesCache = snap.docs.map(d => ({id: d.id, ...d.data()}));
+
+  // Group by stage
+  const groups = {};
+  matchesCache.forEach(m => {
+    const stage = m.stage || 'בתים';
+    if (!groups[stage]) groups[stage] = [];
+    groups[stage].push(m);
+  });
+
+  let html = '<div class="matches-container">';
+  const stageOrder = ['בתים - מחזור 1','בתים - מחזור 2','בתים - מחזור 3','שלב 32','שלב 16','רבע גמר','חצי גמר','גמר'];
+  const stageKeys = stageOrder.filter(s => groups[s]).concat(Object.keys(groups).filter(s => !stageOrder.includes(s)));
+
+  stageKeys.forEach(stage => {
+    html += `<div class="stage-section"><div class="stage-header">${stage}</div>`;
+    groups[stage].forEach(m => {
+      html += renderMatchCard(m);
+    });
+    html += '</div>';
+  });
+  html += '</div>';
+  main.innerHTML = html;
+
+  // Start countdown timers
+  Object.values(countdownTimers).forEach(clearInterval);
+  countdownTimers = {};
+  matchesCache.forEach(m => {
+    if (m.kickoff && !m.result) {
+      countdownTimers[m.id] = setInterval(() => updateCountdown(m.id, m.kickoff.toDate()), 1000);
+    }
+  });
+}
+
+function renderMatchCard(m) {
+  const now = new Date();
+  const kickoff = m.kickoff ? m.kickoff.toDate() : null;
+  const minsLeft = kickoff ? (kickoff - now) / 60000 : Infinity;
+  const locked = minsLeft < 5 || m.result;
+  const hasResult = !!m.result;
+
+  const teamA = m.teamA || '';
+  const teamB = m.teamB || '';
+  const flagA = TEAMS[teamA]?.flag || '🏳️';
+  const flagB = TEAMS[teamB]?.flag || '🏳️';
+
+  const bet = m._userBet;
+  let cardClass = 'match-card';
+  if (hasResult && bet) {
+    if (bet.correct === 'exact') cardClass += ' result-exact';
+    else if (bet.correct === 'direction') cardClass += ' result-direction';
+    else if (bet.correct === 'wrong') cardClass += ' result-wrong';
+  }
+
+  const oddsHtml = m.odds ? `
+    <div class="odds-row">
+      <div class="odd-box ${bet?.pick==='1'?'odd-selected':''}">${m.odds['1'] || '-'}<span>1</span></div>
+      <div class="odd-box ${bet?.pick==='X'?'odd-selected':''}">${m.odds['X'] || '-'}<span>X</span></div>
+      <div class="odd-box ${bet?.pick==='2'?'odd-selected':''}">${m.odds['2'] || '-'}<span>2</span></div>
+    </div>` : '<div class="no-odds">מקדמים בקרוב</div>';
+
+  const resultHtml = hasResult
+    ? `<div class="match-result">${m.result.scoreA} : ${m.result.scoreB}</div>`
+    : kickoff
+    ? `<div class="match-kickoff">
+        <div class="kickoff-time">${formatDate(kickoff)}</div>
+        ${!locked ? `<div class="countdown" id="cd-${m.id}"></div>` : '<div class="bet-locked">🔒 הימור נעול</div>'}
+       </div>`
+    : '<div class="no-kickoff">מועד טרם נקבע</div>';
+
+  const betSection = !locked && !hasResult ? `
+    <div class="bet-section">
+      <div class="bet-title">הימור שלך</div>
+      <div class="bet-picks">
+        <button class="pick-btn ${bet?.pick==='1'?'pick-active':''}" onclick="window.placeBet('${m.id}','1')">1 — ${teamA}</button>
+        <button class="pick-btn ${bet?.pick==='X'?'pick-active':''}" onclick="window.placeBet('${m.id}','X')">תיקו</button>
+        <button class="pick-btn ${bet?.pick==='2'?'pick-active':''}" onclick="window.placeBet('${m.id}','2')">2 — ${teamB}</button>
+      </div>
+      <div class="exact-score-row">
+        <span>תוצאה מדויקת (בונוס +4):</span>
+        <div class="exact-inputs">
+          <input class="score-input" id="exact-a-${m.id}" type="number" min="0" max="20" placeholder="0" value="${bet?.exactA ?? ''}">
+          <span>:</span>
+          <input class="score-input" id="exact-b-${m.id}" type="number" min="0" max="20" placeholder="0" value="${bet?.exactB ?? ''}">
+          <button class="btn-exact" onclick="window.placeExact('${m.id}')">שמור</button>
+        </div>
+      </div>
+    </div>` : bet ? `
+    <div class="bet-display">
+      <span class="bet-badge">הימור: <strong>${bet.pick}</strong>${bet.exactA !== undefined ? ` · ${bet.exactA}:${bet.exactB}` : ''}</span>
+      ${hasResult && bet.pointsEarned !== undefined ? `<span class="points-badge">+${bet.pointsEarned.toFixed(1)} נק'</span>` : ''}
+    </div>` : locked ? '<div class="no-bet-locked">לא הימרת על משחק זה</div>' : '';
+
+  return `
+    <div class="${cardClass}" id="mc-${m.id}">
+      <div class="match-header">
+        <span class="match-stage-badge">${m.stage || ''}</span>
+        ${hasResult ? '<span class="match-finished">סיום ✓</span>' : ''}
+      </div>
+      <div class="match-teams">
+        <div class="team-side">
+          <span class="team-flag">${flagA}</span>
+          <span class="team-name">${teamA}</span>
+        </div>
+        <div class="match-center">
+          ${resultHtml}
+        </div>
+        <div class="team-side team-side-b">
+          <span class="team-name">${teamB}</span>
+          <span class="team-flag">${flagB}</span>
+        </div>
+      </div>
+      ${oddsHtml}
+      ${betSection}
+    </div>`;
+}
+
+async function loadUserBets(matches) {
+  if (!currentUser) return matches;
+  const betsSnap = await getDocs(collection(db, 'users', currentUser.uid, 'bets'));
+  const betsMap = {};
+  betsSnap.forEach(d => { betsMap[d.id] = d.data(); });
+  return matches.map(m => ({...m, _userBet: betsMap[m.id] || null}));
+}
+
+async function placeBet(matchId, pick) {
+  if (!currentUser) return;
+  const match = matchesCache.find(m => m.id === matchId);
+  if (!match) return;
+  const kickoff = match.kickoff?.toDate();
+  if (kickoff && (kickoff - new Date()) < 5 * 60 * 1000) {
+    alert('ההימור נסגר 5 דקות לפני הקיקאוף!');
+    return;
+  }
+  const betRef = doc(db, 'users', currentUser.uid, 'bets', matchId);
+  const existing = await getDoc(betRef);
+  const current = existing.exists() ? existing.data() : {};
+  await setDoc(betRef, {...current, pick, matchId, timestamp: serverTimestamp()}, {merge: true});
+  renderMatchesTab();
+}
+window.placeBet = placeBet;
+
+async function placeExact(matchId) {
+  if (!currentUser) return;
+  const a = parseInt(document.getElementById(`exact-a-${matchId}`)?.value);
+  const b = parseInt(document.getElementById(`exact-b-${matchId}`)?.value);
+  if (isNaN(a) || isNaN(b)) { alert('הזן תוצאה מדויקת'); return; }
+  const betRef = doc(db, 'users', currentUser.uid, 'bets', matchId);
+  await setDoc(betRef, {exactA: a, exactB: b, matchId, timestamp: serverTimestamp()}, {merge: true});
+  alert('תוצאה מדויקת נשמרה! ✓');
+  renderMatchesTab();
+}
+window.placeExact = placeExact;
+
+function updateCountdown(matchId, kickoff) {
+  const el = document.getElementById(`cd-${matchId}`);
+  if (!el) { clearInterval(countdownTimers[matchId]); return; }
+  const diff = kickoff - new Date();
+  if (diff <= 0) { el.textContent = '🔒 נעול'; clearInterval(countdownTimers[matchId]); return; }
+  if (diff < 5 * 60 * 1000) { el.textContent = '🔒 הימור נעול'; el.style.color = '#ef4444'; return; }
+  const h = Math.floor(diff / 3600000);
+  const m = Math.floor((diff % 3600000) / 60000);
+  const s = Math.floor((diff % 60000) / 1000);
+  el.textContent = h > 0 ? `${h}:${String(m).padStart(2,'0')}:${String(s).padStart(2,'0')}` : `${m}:${String(s).padStart(2,'0')}`;
+}
+
+// ═══════════════════════════════════════════
+// LEADERBOARD TAB
+// ═══════════════════════════════════════════
+function renderLeaderboardTab() {
+  const main = document.getElementById('app-main');
+  main.innerHTML = '<div class="loading">טוען טבלה...</div>';
+
+  if (unsubLeaderboard) unsubLeaderboard();
+  unsubLeaderboard = onSnapshot(
+    query(collection(db, 'users'), orderBy('totalScore', 'desc')),
+    snap => {
+      const users = snap.docs.map((d,i) => ({...d.data(), uid: d.id, rank: i+1}));
+      let html = '<div class="leaderboard-wrap"><div class="leaderboard-title">🏆 לוח מובילים</div>';
+      users.forEach(u => {
+        const isMe = u.uid === currentUser?.uid;
+        const medal = u.rank === 1 ? '🥇' : u.rank === 2 ? '🥈' : u.rank === 3 ? '🥉' : `${u.rank}.`;
+        html += `<div class="lb-row ${isMe?'lb-me':''}">
+          <span class="lb-rank">${medal}</span>
+          <span class="lb-name">${u.displayName || u.email}</span>
+          <span class="lb-score">${(u.totalScore || 0).toFixed(1)} נק'</span>
+        </div>`;
+      });
+      html += '</div>';
+      main.innerHTML = html;
+    }
+  );
+}
+
+// ═══════════════════════════════════════════
+// TOP SCORER TAB
+// ═══════════════════════════════════════════
+async function renderTopScorerTab() {
+  const main = document.getElementById('app-main');
+  const userSnap = await getDoc(doc(db, 'users', currentUser.uid));
+  const userData = userSnap.data();
+  const myPick = userData?.topScorerPick || null;
+
+  // Check if locked (tournament started)
+  const settingsSnap = await getDoc(doc(db, 'settings', 'tournament'));
+  const locked = settingsSnap.exists() && settingsSnap.data().topScorerLocked;
+
+  const topScorerSnap = await getDoc(doc(db, 'settings', 'tournament'));
+  const actualScorer = topScorerSnap.exists() ? topScorerSnap.data().topScorer : null;
+
+  main.innerHTML = `
+    <div class="topscorer-wrap">
+      <div class="ts-header">
+        <div class="ts-icon">⭐</div>
+        <h2>מלך השערים</h2>
+        <p>בחר שחקן אחד שלדעתך יהיה מלך השערים של הטורניר. אם תנחש נכון — 20 נקודות בונוס!</p>
+      </div>
+      ${myPick ? `<div class="my-pick-box"><span>הבחירה שלך:</span><strong>${myPick}</strong> ${locked ? '' : '<button class="btn-sm" onclick="window.clearTopScorer()">שנה</button>'}</div>` : ''}
+      ${actualScorer ? `<div class="actual-scorer-box">🏆 מלך השערים הרשמי: <strong>${actualScorer}</strong></div>` : ''}
+      ${!locked && !myPick ? `
+        <div class="ts-input-wrap">
+          <input id="ts-input" type="text" placeholder="שם השחקן..." list="ts-list" autocomplete="off">
+          <datalist id="ts-list"></datalist>
+          <button class="btn-primary" onclick="window.saveTopScorer()">שמור בחירה</button>
+        </div>
+        <p class="ts-hint">הקלד שם שחקן ידוע (כריסטיאנו, מבאפה, הלנד...)</p>
+      ` : ''}
+    </div>`;
+}
+
+async function saveTopScorer() {
+  const val = document.getElementById('ts-input')?.value?.trim();
+  if (!val) return;
+  await updateDoc(doc(db, 'users', currentUser.uid), {topScorerPick: val});
+  renderTopScorerTab();
+}
+window.saveTopScorer = saveTopScorer;
+
+async function clearTopScorer() {
+  await updateDoc(doc(db, 'users', currentUser.uid), {topScorerPick: ''});
+  renderTopScorerTab();
+}
+window.clearTopScorer = clearTopScorer;
+
+// ═══════════════════════════════════════════
+// CHAMPION TAB
+// ═══════════════════════════════════════════
+async function renderChampionTab() {
+  const main = document.getElementById('app-main');
+  const userSnap = await getDoc(doc(db, 'users', currentUser.uid));
+  const userData = userSnap.data();
+  const myPick = userData?.championPick || null;
+  const myPickOdds = userData?.championOdds || null;
+
+  const settingsSnap = await getDoc(doc(db, 'settings', 'tournament'));
+  const locked = settingsSnap.exists() && settingsSnap.data().championLocked;
+  const actualChamp = settingsSnap.exists() ? settingsSnap.data().champion : null;
+
+  // Get champion odds from settings
+  const champOdds = settingsSnap.exists() ? (settingsSnap.data().championOdds || {}) : {};
+
+  main.innerHTML = `
+    <div class="champion-wrap">
+      <div class="champ-header">
+        <div class="champ-icon">🥇</div>
+        <h2>אלוף המונדיאל</h2>
+        <p>בחר את הקבוצה שתנצח במונדיאל 2026. המענק נקבע לפי מקדם ההימור שלה.</p>
+      </div>
+      ${myPick ? `
+        <div class="my-pick-box">
+          <span>הבחירה שלך:</span>
+          <strong>${TEAMS[myPick]?.flag || ''} ${myPick}</strong>
+          ${myPickOdds ? `<span class="odds-chip">× ${myPickOdds}</span>` : ''}
+          ${!locked ? '<button class="btn-sm" onclick="window.clearChampion()">שנה</button>' : ''}
+        </div>` : ''}
+      ${actualChamp ? `<div class="actual-scorer-box">🏆 האלוף הרשמי: ${TEAMS[actualChamp]?.flag || ''} <strong>${actualChamp}</strong></div>` : ''}
+      ${!locked && !myPick ? `
+        <div class="champ-grid">
+          ${TEAM_NAMES.map(t => `
+            <div class="champ-team-card" onclick="window.pickChampion('${t}', ${champOdds[t] || 10})">
+              <span class="ctc-flag">${TEAMS[t].flag}</span>
+              <span class="ctc-name">${t}</span>
+              ${champOdds[t] ? `<span class="ctc-odds">× ${champOdds[t]}</span>` : ''}
+            </div>`).join('')}
+        </div>` : ''}
+    </div>`;
+}
+
+async function pickChampion(team, odds) {
+  if (!confirm(`לבחור ${team} כאלוף המונדיאל?`)) return;
+  await updateDoc(doc(db, 'users', currentUser.uid), {championPick: team, championOdds: odds});
+  renderChampionTab();
+}
+window.pickChampion = pickChampion;
+
+async function clearChampion() {
+  await updateDoc(doc(db, 'users', currentUser.uid), {championPick: '', championOdds: null});
+  renderChampionTab();
+}
+window.clearChampion = clearChampion;
+
+// ═══════════════════════════════════════════
+// PROFILE TAB
+// ═══════════════════════════════════════════
+async function renderProfileTab() {
+  const main = document.getElementById('app-main');
+  const snap = await getDoc(doc(db, 'users', currentUser.uid));
+  const data = snap.data();
+  main.innerHTML = `
+    <div class="profile-wrap">
+      <div class="profile-avatar">${data?.displayName?.charAt(0)?.toUpperCase() || '?'}</div>
+      <div class="profile-name">${data?.displayName || ''}</div>
+      <div class="profile-email">${currentUser.email}</div>
+      <div class="profile-score-big">${(data?.totalScore || 0).toFixed(1)} <span>נקודות</span></div>
+      <button class="btn-danger" onclick="window.logout()">התנתקות</button>
+    </div>`;
+}
+
+// ═══════════════════════════════════════════
+// ADMIN PANEL
+// ═══════════════════════════════════════════
+function renderAdmin(tab) {
+  const tabs = [
+    {id:'matches', label:'⚽ משחקים'},
+    {id:'users', label:'👥 משתמשים'},
+    {id:'results', label:'✅ תוצאות'},
+    {id:'tournament', label:'🏆 טורניר'},
+  ];
+  document.getElementById('app').innerHTML = `
+    <div class="app-shell">
+      <header class="app-header admin-header">
+        <div class="header-brand">
+          <span class="header-trophy">⚙️</span>
+          <div>
+            <div class="header-title">פאנל אדמין — לחמן 2026</div>
+            <div class="header-user">שלום, Gidi</div>
+          </div>
+        </div>
+        <button class="btn-logout" onclick="window.logout()">יציאה</button>
+      </header>
+      <nav class="app-nav">
+        ${tabs.map(t=>`<button class="nav-btn ${tab===t.id?'active':''}" onclick="window.adminTab('${t.id}')">${t.label}</button>`).join('')}
+      </nav>
+      <main class="app-main" id="app-main"></main>
+    </div>`;
+  adminTab(tab);
+}
+window.renderAdmin = renderAdmin;
+
+function adminTab(tab) {
+  document.querySelectorAll('.nav-btn').forEach(b => b.classList.remove('active'));
+  document.querySelectorAll('.nav-btn').forEach(b => {
+    if ((tab==='matches'&&b.textContent.includes('משחקים'))||(tab==='users'&&b.textContent.includes('משתמשים'))||(tab==='results'&&b.textContent.includes('תוצאות'))||(tab==='tournament'&&b.textContent.includes('טורניר'))) b.classList.add('active');
+  });
+  if (tab==='matches') renderAdminMatches();
+  else if (tab==='users') renderAdminUsers();
+  else if (tab==='results') renderAdminResults();
+  else if (tab==='tournament') renderAdminTournament();
+}
+window.adminTab = adminTab;
+
+// ── ADMIN: MATCHES ──
+async function renderAdminMatches() {
+  const main = document.getElementById('app-main');
+  const snap = await getDocs(query(collection(db, 'matches'), orderBy('kickoff', 'asc')));
+  const matches = snap.docs.map(d => ({id: d.id, ...d.data()}));
+
+  main.innerHTML = `
+    <div class="admin-section">
+      <div class="admin-section-title">הוספת משחק חדש</div>
+      <div class="admin-form">
+        <select id="am-stage">
+          <option>בתים - מחזור 1</option><option>בתים - מחזור 2</option><option>בתים - מחזור 3</option>
+          <option>שלב 32</option><option>שלב 16</option><option>רבע גמר</option><option>חצי גמר</option><option>גמר</option>
+        </select>
+        <select id="am-teamA">${TEAM_NAMES.map(t=>`<option>${t}</option>`).join('')}</select>
+        <select id="am-teamB">${TEAM_NAMES.map(t=>`<option>${t}</option>`).join('')}</select>
+        <input id="am-kickoff" type="datetime-local">
+        <input id="am-odd1" type="number" step="0.01" placeholder="מקדם 1" min="1">
+        <input id="am-oddX" type="number" step="0.01" placeholder="מקדם X" min="1">
+        <input id="am-odd2" type="number" step="0.01" placeholder="מקדם 2" min="1">
+        <button class="btn-admin" onclick="window.addMatch()">➕ הוסף משחק</button>
+      </div>
+      <div class="admin-section-title" style="margin-top:24px">משחקים קיימים</div>
+      <div class="admin-matches-list">
+        ${matches.length === 0 ? '<p class="empty-state">אין משחקים עדיין</p>' : matches.map(m => `
+          <div class="admin-match-row">
+            <span class="amr-stage">${m.stage}</span>
+            <span class="amr-teams">${TEAMS[m.teamA]?.flag||''} ${m.teamA} vs ${m.teamB} ${TEAMS[m.teamB]?.flag||''}</span>
+            <span class="amr-kickoff">${m.kickoff ? formatDate(m.kickoff.toDate()) : 'ללא מועד'}</span>
+            <span class="amr-odds">${m.odds?.['1']||'-'} / ${m.odds?.['X']||'-'} / ${m.odds?.['2']||'-'}</span>
+            <button class="btn-danger-sm" onclick="window.deleteMatch('${m.id}')">🗑️</button>
+          </div>`).join('')}
+      </div>
+    </div>`;
+}
+
+async function addMatch() {
+  const stage = document.getElementById('am-stage').value;
+  const teamA = document.getElementById('am-teamA').value;
+  const teamB = document.getElementById('am-teamB').value;
+  const kickoffVal = document.getElementById('am-kickoff').value;
+  const odd1 = parseFloat(document.getElementById('am-odd1').value);
+  const oddX = parseFloat(document.getElementById('am-oddX').value);
+  const odd2 = parseFloat(document.getElementById('am-odd2').value);
+  if (!kickoffVal) { alert('בחר זמן קיקאוף'); return; }
+  if (teamA === teamB) { alert('בחר קבוצות שונות'); return; }
+  await addDoc(collection(db, 'matches'), {
+    stage, teamA, teamB,
+    kickoff: new Date(kickoffVal),
+    odds: {'1': odd1 || null, 'X': oddX || null, '2': odd2 || null},
+    createdAt: serverTimestamp()
+  });
+  renderAdminMatches();
+}
+window.addMatch = addMatch;
+
+async function deleteMatch(matchId) {
+  if (!confirm('למחוק משחק זה?')) return;
+  await deleteDoc(doc(db, 'matches', matchId));
+  renderAdminMatches();
+}
+window.deleteMatch = deleteMatch;
+
+// ── ADMIN: USERS ──
+async function renderAdminUsers() {
+  const main = document.getElementById('app-main');
+  const snap = await getDocs(collection(db, 'users'));
+  const users = snap.docs.map(d => ({uid: d.id, ...d.data()}));
+
+  main.innerHTML = `
+    <div class="admin-section">
+      <div class="admin-section-title">הוספת משתמש חדש</div>
+      <div class="admin-form">
+        <input id="nu-name" type="text" placeholder="שם תצוגה (עברית)">
+        <input id="nu-email" type="email" placeholder="אימייל" dir="ltr">
+        <input id="nu-pass" type="text" placeholder="סיסמה זמנית" dir="ltr">
+        <button class="btn-admin" onclick="window.addUser()">➕ הוסף משתמש</button>
+      </div>
+      <div class="admin-section-title" style="margin-top:24px">משתמשים רשומים</div>
+      <div class="admin-users-list">
+        ${users.map(u => `
+          <div class="admin-user-row">
+            <span class="aur-avatar">${u.displayName?.charAt(0)?.toUpperCase()||'?'}</span>
+            <span class="aur-name">${u.displayName||''}</span>
+            <span class="aur-email">${u.email||''}</span>
+            <span class="aur-score">${(u.totalScore||0).toFixed(1)} נק'</span>
+            ${u.isAdmin ? '<span class="aur-admin">אדמין</span>' : ''}
+          </div>`).join('')}
+      </div>
+    </div>`;
+}
+
+async function addUser() {
+  const name = document.getElementById('nu-name').value.trim();
+  const email = document.getElementById('nu-email').value.trim();
+  const pass = document.getElementById('nu-pass').value.trim();
+  if (!name || !email || !pass) { alert('מלא את כל השדות'); return; }
+  try {
+    const cred = await createUserWithEmailAndPassword(auth, email, pass);
+    await setDoc(doc(db, 'users', cred.user.uid), {
+      displayName: name, email, isAdmin: false,
+      totalScore: 0, mustChangePassword: true,
+      topScorerPick: '', championPick: '',
+      createdAt: serverTimestamp()
+    });
+    await signInWithEmailAndPassword(auth, 'gidi@lachman2026.com', currentUserData?.adminPass || '');
+    alert(`✓ משתמש ${name} נוסף! הסיסמה הזמנית: ${pass}`);
+    renderAdminUsers();
+  } catch(e) {
+    alert('שגיאה: ' + e.message);
+  }
+}
+window.addUser = addUser;
+
+// ── ADMIN: RESULTS ──
+async function renderAdminResults() {
+  const main = document.getElementById('app-main');
+  const snap = await getDocs(query(collection(db, 'matches'), orderBy('kickoff', 'asc')));
+  const matches = snap.docs.map(d => ({id: d.id, ...d.data()})).filter(m => !m.result);
+
+  main.innerHTML = `
+    <div class="admin-section">
+      <div class="admin-section-title">הזנת תוצאות משחקים</div>
+      ${matches.length === 0 ? '<p class="empty-state">אין משחקים ממתינים לתוצאה</p>' : matches.map(m => `
+        <div class="result-entry-card">
+          <div class="rec-teams">${TEAMS[m.teamA]?.flag||''} ${m.teamA} vs ${m.teamB} ${TEAMS[m.teamB]?.flag||''}</div>
+          <div class="rec-stage">${m.stage}</div>
+          <div class="rec-inputs">
+            <input id="res-a-${m.id}" type="number" min="0" max="20" placeholder="0" class="score-input">
+            <span>:</span>
+            <input id="res-b-${m.id}" type="number" min="0" max="20" placeholder="0" class="score-input">
+            <input id="res-scorer-${m.id}" type="text" placeholder="כובש (אופציונלי)">
+            <button class="btn-admin" onclick="window.submitResult('${m.id}','${m.teamA}','${m.teamB}','${m.stage}',${JSON.stringify(m.odds||{}).replace(/"/g,"'")})">✅ אשר תוצאה</button>
+          </div>
+        </div>`).join('')}
+    </div>`;
+}
+
+async function submitResult(matchId, teamA, teamB, stage, oddsRaw) {
+  const scoreA = parseInt(document.getElementById(`res-a-${matchId}`)?.value);
+  const scoreB = parseInt(document.getElementById(`res-b-${matchId}`)?.value);
+  const scorer = document.getElementById(`res-scorer-${matchId}`)?.value?.trim();
+  if (isNaN(scoreA) || isNaN(scoreB)) { alert('הזן תוצאה תקינה'); return; }
+
+  const direction = scoreA > scoreB ? '1' : scoreA < scoreB ? '2' : 'X';
+
+  // Rebuild odds safely
+  const odds = typeof oddsRaw === 'string'
+    ? JSON.parse(oddsRaw.replace(/'/g,'"'))
+    : oddsRaw;
+
+  // Save result to match
+  await updateDoc(doc(db, 'matches', matchId), {
+    result: {scoreA, scoreB, direction, scorer: scorer || null},
+    updatedAt: serverTimestamp()
+  });
+
+  // Calculate points for all users
+  const usersSnap = await getDocs(collection(db, 'users'));
+  const batch = [];
+  for (const userDoc of usersSnap.docs) {
+    const uid = userDoc.id;
+    const betSnap = await getDoc(doc(db, 'users', uid, 'bets', matchId));
+    if (!betSnap.exists()) continue;
+    const bet = betSnap.data();
+    let pts = 0;
+    let correct = 'wrong';
+
+    if (bet.pick === direction) {
+      correct = 'direction';
+      const oddsVal = parseFloat(odds?.[bet.pick]) || 1;
+      pts += oddsVal;
+    }
+    if (bet.exactA === scoreA && bet.exactB === scoreB && bet.pick) {
+      correct = 'exact';
+      const stageBonus = (stage === 'בתים - מחזור 1' || stage === 'בתים - מחזור 2' || stage === 'בתים - מחזור 3') ? 4 : 6;
+      pts += stageBonus;
+    }
+
+    await setDoc(doc(db, 'users', uid, 'bets', matchId), {
+      ...bet, correct, pointsEarned: pts
+    }, {merge: true});
+
+    // Update total score
+    const userData = userDoc.data();
+    const newScore = (userData.totalScore || 0) + pts;
+    batch.push(updateDoc(doc(db, 'users', uid), {totalScore: newScore}));
+  }
+  await Promise.all(batch);
+  alert(`✓ תוצאה נשמרה! נקודות חולקו לכל השחקנים.`);
+  renderAdminResults();
+}
+window.submitResult = submitResult;
+
+// ── ADMIN: TOURNAMENT ──
+async function renderAdminTournament() {
+  const main = document.getElementById('app-main');
+  const snap = await getDoc(doc(db, 'settings', 'tournament'));
+  const settings = snap.exists() ? snap.data() : {};
+
+  main.innerHTML = `
+    <div class="admin-section">
+      <div class="admin-section-title">הגדרות טורניר</div>
+      
+      <div class="setting-block">
+        <label>מלך השערים הרשמי</label>
+        <div class="setting-row">
+          <input id="set-topscorer" type="text" placeholder="שם השחקן" value="${settings.topScorer || ''}">
+          <button class="btn-admin" onclick="window.saveTournamentSetting('topScorer', 'set-topscorer')">שמור</button>
+        </div>
+        <label class="toggle-label">
+          <input type="checkbox" id="ts-lock" ${settings.topScorerLocked ? 'checked' : ''} onchange="window.toggleLock('topScorerLocked', this.checked)">
+          נעל הימורים מלך השערים
+        </label>
+      </div>
+
+      <div class="setting-block">
+        <label>אלוף המונדיאל הרשמי</label>
+        <div class="setting-row">
+          <select id="set-champion">
+            <option value="">-- בחר קבוצה --</option>
+            ${TEAM_NAMES.map(t=>`<option value="${t}" ${settings.champion===t?'selected':''}>${TEAMS[t].flag} ${t}</option>`).join('')}
+          </select>
+          <button class="btn-admin" onclick="window.saveTournamentSetting('champion', 'set-champion')">שמור</button>
+        </div>
+        <label class="toggle-label">
+          <input type="checkbox" id="champ-lock" ${settings.championLocked ? 'checked' : ''} onchange="window.toggleLock('championLocked', this.checked)">
+          נעל הימורי אלוף
+        </label>
+      </div>
+
+      <div class="setting-block">
+        <label>מקדמי אלוף (לפי קבוצה)</label>
+        <div class="odds-grid">
+          ${TEAM_NAMES.map(t => `
+            <div class="odds-team-row">
+              <span>${TEAMS[t].flag} ${t}</span>
+              <input id="co-${t.replace(/\s/g,'_')}" type="number" step="0.1" min="1" placeholder="מקדם" value="${settings.championOdds?.[t]||''}">
+            </div>`).join('')}
+        </div>
+        <button class="btn-admin" style="margin-top:12px" onclick="window.saveChampionOdds()">💾 שמור מקדמי אלוף</button>
+      </div>
+
+      <div class="setting-block">
+        <button class="btn-danger" onclick="window.awardTopScorerBonus()">🌟 חלק בונוס מלך שערים (+20 לכולם שנחשו)</button>
+      </div>
+    </div>`;
+}
+
+async function saveTournamentSetting(key, inputId) {
+  const el = document.getElementById(inputId);
+  const val = el?.value;
+  await setDoc(doc(db, 'settings', 'tournament'), {[key]: val}, {merge: true});
+  
+  // If champion is set, award champion bonuses
+  if (key === 'champion' && val) await awardChampionBonus(val);
+  alert('נשמר ✓');
+}
+window.saveTournamentSetting = saveTournamentSetting;
+
+async function toggleLock(key, val) {
+  await setDoc(doc(db, 'settings', 'tournament'), {[key]: val}, {merge: true});
+}
+window.toggleLock = toggleLock;
+
+async function saveChampionOdds() {
+  const odds = {};
+  TEAM_NAMES.forEach(t => {
+    const v = parseFloat(document.getElementById(`co-${t.replace(/\s/g,'_')}`)?.value);
+    if (!isNaN(v)) odds[t] = v;
+  });
+  await setDoc(doc(db, 'settings', 'tournament'), {championOdds: odds}, {merge: true});
+  alert('מקדמי אלוף נשמרו ✓');
+}
+window.saveChampionOdds = saveChampionOdds;
+
+async function awardChampionBonus(champion) {
+  const usersSnap = await getDocs(collection(db, 'users'));
+  for (const userDoc of usersSnap.docs) {
+    const data = userDoc.data();
+    if (data.championPick === champion && !data.championBonusAwarded) {
+      const bonus = data.championOdds || 10;
+      await updateDoc(doc(db, 'users', userDoc.id), {
+        totalScore: (data.totalScore || 0) + bonus,
+        championBonusAwarded: true
+      });
+    }
+  }
+}
+
+async function awardTopScorerBonus() {
+  const settingsSnap = await getDoc(doc(db, 'settings', 'tournament'));
+  const topScorer = settingsSnap.data()?.topScorer;
+  if (!topScorer) { alert('הגדר קודם מלך שערים'); return; }
+  const usersSnap = await getDocs(collection(db, 'users'));
+  let count = 0;
+  for (const userDoc of usersSnap.docs) {
+    const data = userDoc.data();
+    if (data.topScorerPick?.toLowerCase() === topScorer.toLowerCase() && !data.topScorerBonusAwarded) {
+      await updateDoc(doc(db, 'users', userDoc.id), {
+        totalScore: (data.totalScore || 0) + 20,
+        topScorerBonusAwarded: true
+      });
+      count++;
+    }
+  }
+  alert(`✓ בונוס מלך שערים חולק ל-${count} שחקנים`);
+}
+window.awardTopScorerBonus = awardTopScorerBonus;
+
+// ═══════════════════════════════════════════
+// UTILS
+// ═══════════════════════════════════════════
+function formatDate(d) {
+  if (!d) return '';
+  return d.toLocaleDateString('he-IL', {day:'2-digit',month:'2-digit',hour:'2-digit',minute:'2-digit'});
+}
+
+// Expose global functions
+window.login = login;
+window.logout = logout;
+window.changePassword = changePassword;
+window.renderMain = renderMain;
+</script>
+
+<style>
+/* ═══════════════════════════════════════
+   DESIGN SYSTEM
+═══════════════════════════════════════ */
+*,*::before,*::after{box-sizing:border-box;margin:0;padding:0}
+html{font-size:15px;scroll-behavior:smooth}
+body{
+  font-family:'Rubik',sans-serif;
+  background:#0f0f1a;
+  color:#f0ece4;
+  min-height:100vh;
+  direction:rtl;
+}
+
+:root{
+  --bg:#0f0f1a;
+  --bg2:#16172a;
+  --card:#1e1f35;
+  --card2:#252640;
+  --border:rgba(255,255,255,.08);
+  --gold:#f5c842;
+  --gold2:#e0a800;
+  --goldbg:rgba(245,200,66,.1);
+  --green:#22c55e;
+  --greenbg:rgba(34,197,94,.12);
+  --red:#ef4444;
+  --redbg:rgba(239,68,68,.12);
+  --blue:#3b82f6;
+  --bluebg:rgba(59,130,246,.12);
+  --ink:#f0ece4;
+  --muted:#8080a0;
+  --sh:0 4px 24px rgba(0,0,0,.4);
+  --sh2:0 8px 40px rgba(0,0,0,.6);
+}
+
+/* ── LOGIN ── */
+.login-page{
+  min-height:100vh;display:flex;align-items:center;justify-content:center;
+  background:radial-gradient(ellipse at 50% 0%, rgba(245,200,66,.15) 0%, transparent 70%), #0f0f1a;
+  padding:20px;
+}
+.login-card{
+  background:var(--card);border:1px solid rgba(245,200,66,.2);border-radius:24px;
+  padding:48px 40px;max-width:400px;width:100%;box-shadow:var(--sh2);
+  animation:fadeUp .4s ease;
+}
+.login-logo{text-align:center;margin-bottom:36px}
+.login-trophy{font-size:56px;margin-bottom:12px;display:block;animation:pulse 2s infinite}
+@keyframes pulse{0%,100%{transform:scale(1)}50%{transform:scale(1.08)}}
+.login-title{
+  font-family:'Heebo',sans-serif;font-weight:900;font-size:36px;
+  background:linear-gradient(135deg,#f5c842,#f97316);
+  -webkit-background-clip:text;-webkit-text-fill-color:transparent;background-clip:text;
+  margin-bottom:6px;
+}
+.login-sub{color:var(--muted);font-size:13px;font-weight:500}
+
+.login-form{display:flex;flex-direction:column;gap:16px}
+.field{display:flex;flex-direction:column;gap:6px}
+.field label{font-size:13px;font-weight:600;color:var(--muted)}
+.field input{
+  background:var(--bg2);border:1px solid var(--border);border-radius:10px;
+  padding:12px 14px;color:var(--ink);font-size:14px;font-family:'Rubik',sans-serif;
+  transition:border-color .2s;outline:none;
+}
+.field input:focus{border-color:var(--gold)}
+.err-msg{color:var(--red);font-size:12px;min-height:16px}
+
+/* ── BUTTONS ── */
+.btn-primary{
+  background:linear-gradient(135deg,var(--gold),#f97316);border:none;border-radius:12px;
+  padding:14px;font-size:15px;font-weight:700;color:#000;cursor:pointer;
+  transition:all .2s;font-family:'Rubik',sans-serif;
+}
+.btn-primary:hover{transform:translateY(-1px);box-shadow:0 6px 20px rgba(245,200,66,.35)}
+.btn-sm{background:var(--card2);border:1px solid var(--border);border-radius:7px;padding:5px 12px;font-size:12px;color:var(--muted);cursor:pointer;font-family:'Rubik',sans-serif}
+.btn-danger{background:var(--redbg);border:1px solid rgba(239,68,68,.3);border-radius:10px;padding:12px 20px;font-size:14px;font-weight:600;color:var(--red);cursor:pointer;font-family:'Rubik',sans-serif}
+.btn-danger-sm{background:var(--redbg);border:1px solid rgba(239,68,68,.3);border-radius:6px;padding:4px 10px;font-size:12px;color:var(--red);cursor:pointer;font-family:'Rubik',sans-serif}
+.btn-admin{background:var(--goldbg);border:1px solid rgba(245,200,66,.3);border-radius:9px;padding:10px 18px;font-size:13px;font-weight:600;color:var(--gold);cursor:pointer;font-family:'Rubik',sans-serif;transition:all .2s}
+.btn-admin:hover{background:rgba(245,200,66,.2)}
+.btn-logout{background:transparent;border:1px solid var(--border);border-radius:8px;padding:8px 16px;font-size:12px;color:var(--muted);cursor:pointer;font-family:'Rubik',sans-serif}
+
+/* ── APP SHELL ── */
+.app-shell{display:flex;flex-direction:column;min-height:100vh}
+.app-header{
+  position:sticky;top:0;z-index:100;
+  background:rgba(15,15,26,.9);backdrop-filter:blur(20px);
+  border-bottom:1px solid var(--border);
+  padding:0 20px;height:60px;
+  display:flex;align-items:center;justify-content:space-between;
+}
+.admin-header{border-bottom-color:rgba(245,200,66,.2)}
+
+.header-brand{display:flex;align-items:center;gap:12px}
+.header-trophy{font-size:24px}
+.header-title{font-weight:800;font-size:16px;color:var(--ink);line-height:1}
+.header-user{font-size:11px;color:var(--muted);margin-top:2px}
+.header-score{display:flex;flex-direction:column;align-items:center;background:var(--goldbg);border:1px solid rgba(245,200,66,.3);border-radius:12px;padding:6px 14px}
+.score-num{font-size:20px;font-weight:900;color:var(--gold);line-height:1}
+.score-lbl{font-size:9px;color:var(--gold);font-weight:600;letter-spacing:1px}
+
+/* ── NAV ── */
+.app-nav{
+  display:flex;gap:4px;padding:10px 16px;overflow-x:auto;
+  background:var(--bg2);border-bottom:1px solid var(--border);
+  scrollbar-width:none;
+}
+.app-nav::-webkit-scrollbar{display:none}
+.nav-btn{
+  font-family:'Rubik',sans-serif;font-size:12px;font-weight:600;
+  padding:8px 14px;border:none;background:transparent;color:var(--muted);
+  border-radius:8px;cursor:pointer;transition:all .16s;white-space:nowrap;
+}
+.nav-btn:hover{background:var(--card);color:var(--ink)}
+.nav-btn.active{background:var(--goldbg);color:var(--gold);border:1px solid rgba(245,200,66,.25)}
+
+/* ── MAIN AREA ── */
+.app-main{flex:1;overflow-y:auto;padding:16px;background:var(--bg)}
+.loading{color:var(--muted);text-align:center;padding:40px;font-size:14px}
+@keyframes fadeUp{from{opacity:0;transform:translateY(12px)}to{opacity:1;transform:translateY(0)}}
+
+/* ── MATCHES ── */
+.matches-container{display:flex;flex-direction:column;gap:12px;max-width:700px;margin:0 auto}
+.stage-section{display:flex;flex-direction:column;gap:8px}
+.stage-header{
+  font-size:11px;font-weight:800;letter-spacing:2px;text-transform:uppercase;
+  color:var(--muted);padding:8px 4px;border-bottom:1px solid var(--border);
+  display:flex;align-items:center;gap:8px;
+}
+.stage-header::before{content:'';display:inline-block;width:4px;height:14px;background:var(--gold);border-radius:2px}
+
+.match-card{
+  background:var(--card);border:1px solid var(--border);border-radius:16px;
+  padding:16px;box-shadow:var(--sh);transition:all .2s;
+  animation:fadeUp .3s ease;
+}
+.match-card:hover{border-color:rgba(245,200,66,.2)}
+.result-exact{border-color:rgba(34,197,94,.4)!important;background:rgba(34,197,94,.04)!important}
+.result-direction{border-color:rgba(245,200,66,.4)!important;background:rgba(245,200,66,.04)!important}
+.result-wrong{border-color:rgba(239,68,68,.3)!important;background:rgba(239,68,68,.04)!important}
+
+.match-header{display:flex;justify-content:space-between;align-items:center;margin-bottom:12px}
+.match-stage-badge{font-size:10px;font-weight:700;letter-spacing:1px;color:var(--muted);text-transform:uppercase}
+.match-finished{font-size:10px;color:var(--green);font-weight:700}
+
+.match-teams{display:flex;align-items:center;gap:8px;margin-bottom:12px}
+.team-side{display:flex;align-items:center;gap:8px;flex:1}
+.team-side-b{flex-direction:row-reverse;justify-content:flex-start}
+.team-flag{font-size:28px;line-height:1;flex-shrink:0}
+.team-name{font-size:14px;font-weight:700;color:var(--ink)}
+.match-center{flex-shrink:0;text-align:center;min-width:80px}
+.match-result{font-size:22px;font-weight:900;color:var(--gold);letter-spacing:2px}
+.match-kickoff{display:flex;flex-direction:column;align-items:center;gap:3px}
+.kickoff-time{font-size:11px;color:var(--muted);font-weight:500}
+.countdown{font-size:14px;font-weight:700;color:var(--gold);letter-spacing:1px}
+.bet-locked{font-size:11px;color:var(--red);font-weight:600}
+.no-kickoff{font-size:11px;color:var(--muted)}
+.no-odds{font-size:11px;color:var(--muted);text-align:center;padding:8px}
+
+/* Odds */
+.odds-row{display:flex;gap:6px;margin-bottom:12px}
+.odd-box{
+  flex:1;background:var(--bg2);border:1.5px solid var(--border);border-radius:10px;
+  padding:8px 4px;text-align:center;cursor:pointer;transition:all .15s;
+  font-size:15px;font-weight:700;color:var(--ink);display:flex;flex-direction:column;align-items:center;gap:2px;
+}
+.odd-box span{font-size:9px;font-weight:600;color:var(--muted);letter-spacing:1px}
+.odd-selected{background:var(--goldbg)!important;border-color:var(--gold)!important;color:var(--gold)!important}
+.odd-box:hover{border-color:rgba(245,200,66,.4)}
+
+/* Bet section */
+.bet-section{background:var(--bg2);border-radius:12px;padding:14px;border:1px solid var(--border)}
+.bet-title{font-size:11px;font-weight:700;color:var(--muted);letter-spacing:1px;margin-bottom:10px;text-transform:uppercase}
+.bet-picks{display:flex;gap:6px;margin-bottom:12px}
+.pick-btn{
+  flex:1;background:var(--card);border:1.5px solid var(--border);border-radius:9px;
+  padding:9px 6px;font-size:12px;font-weight:600;color:var(--muted);cursor:pointer;
+  font-family:'Rubik',sans-serif;transition:all .15s;text-align:center;
+}
+.pick-btn:hover{border-color:rgba(245,200,66,.4);color:var(--gold)}
+.pick-active{background:var(--goldbg)!important;border-color:var(--gold)!important;color:var(--gold)!important}
+
+.exact-score-row{display:flex;align-items:center;gap:10px;flex-wrap:wrap;font-size:12px;color:var(--muted)}
+.exact-inputs{display:flex;align-items:center;gap:6px}
+.score-input{
+  width:48px;background:var(--card);border:1.5px solid var(--border);border-radius:8px;
+  padding:7px 4px;text-align:center;font-size:15px;font-weight:700;color:var(--ink);
+  font-family:'Rubik',sans-serif;outline:none;
+}
+.score-input:focus{border-color:var(--gold)}
+.btn-exact{background:var(--goldbg);border:1px solid rgba(245,200,66,.3);border-radius:7px;padding:6px 12px;font-size:12px;font-weight:600;color:var(--gold);cursor:pointer;font-family:'Rubik',sans-serif}
+
+.bet-display{display:flex;align-items:center;justify-content:space-between;padding:10px 14px;background:var(--bg2);border-radius:10px}
+.bet-badge{font-size:13px;color:var(--muted)}
+.bet-badge strong{color:var(--ink)}
+.points-badge{font-size:14px;font-weight:800;color:var(--green)}
+.no-bet-locked{font-size:12px;color:var(--muted);text-align:center;padding:10px}
+
+/* ── LEADERBOARD ── */
+.leaderboard-wrap{max-width:500px;margin:0 auto;display:flex;flex-direction:column;gap:8px}
+.leaderboard-title{font-size:20px;font-weight:900;color:var(--gold);text-align:center;padding:16px 0;margin-bottom:8px}
+.lb-row{
+  display:flex;align-items:center;gap:12px;
+  background:var(--card);border:1px solid var(--border);border-radius:12px;
+  padding:14px 16px;transition:all .2s;
+}
+.lb-me{border-color:rgba(245,200,66,.4);background:var(--goldbg)}
+.lb-rank{font-size:18px;width:32px;text-align:center}
+.lb-name{flex:1;font-size:15px;font-weight:700}
+.lb-score{font-size:16px;font-weight:800;color:var(--gold)}
+
+/* ── TOP SCORER ── */
+.topscorer-wrap,.champion-wrap,.profile-wrap{max-width:600px;margin:0 auto;padding:8px}
+.ts-header,.champ-header{text-align:center;padding:24px 0 20px}
+.ts-icon,.champ-icon{font-size:48px;margin-bottom:10px;display:block}
+.ts-header h2,.champ-header h2{font-size:22px;font-weight:900;margin-bottom:8px}
+.ts-header p,.champ-header p{font-size:13px;color:var(--muted);line-height:1.6}
+.my-pick-box{
+  background:var(--goldbg);border:1px solid rgba(245,200,66,.3);border-radius:12px;
+  padding:14px 16px;display:flex;align-items:center;gap:10px;margin-bottom:16px;
+  font-size:14px;
+}
+.my-pick-box strong{font-size:16px;color:var(--gold)}
+.actual-scorer-box{background:var(--greenbg);border:1px solid rgba(34,197,94,.3);border-radius:12px;padding:14px 16px;font-size:14px;margin-bottom:16px;color:var(--green)}
+.ts-input-wrap{display:flex;flex-direction:column;gap:10px;margin-bottom:10px}
+.ts-input-wrap input{background:var(--card2);border:1px solid var(--border);border-radius:10px;padding:12px 14px;font-size:14px;color:var(--ink);font-family:'Rubik',sans-serif;outline:none}
+.ts-input-wrap input:focus{border-color:var(--gold)}
+.ts-hint{font-size:12px;color:var(--muted);text-align:center}
+.odds-chip{background:var(--card2);border-radius:6px;padding:3px 8px;font-size:12px;color:var(--muted)}
+
+/* ── CHAMPION GRID ── */
+.champ-grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(140px,1fr));gap:8px}
+.champ-team-card{
+  background:var(--card);border:1.5px solid var(--border);border-radius:12px;
+  padding:14px;text-align:center;cursor:pointer;transition:all .2s;
+  display:flex;flex-direction:column;align-items:center;gap:6px;
+}
+.champ-team-card:hover{border-color:var(--gold);background:var(--goldbg);transform:translateY(-2px)}
+.ctc-flag{font-size:30px}
+.ctc-name{font-size:11px;font-weight:700;color:var(--ink)}
+.ctc-odds{font-size:12px;font-weight:700;color:var(--gold);background:var(--goldbg);padding:2px 7px;border-radius:5px}
+
+/* ── PROFILE ── */
+.profile-wrap{display:flex;flex-direction:column;align-items:center;gap:14px;padding-top:32px}
+.profile-avatar{width:72px;height:72px;border-radius:50%;background:var(--goldbg);border:2px solid var(--gold);display:flex;align-items:center;justify-content:center;font-size:28px;font-weight:900;color:var(--gold)}
+.profile-name{font-size:22px;font-weight:900}
+.profile-email{font-size:13px;color:var(--muted)}
+.profile-score-big{font-size:40px;font-weight:900;color:var(--gold);margin:8px 0}
+.profile-score-big span{font-size:16px;color:var(--muted)}
+
+/* ── ADMIN ── */
+.admin-section{max-width:800px;margin:0 auto;display:flex;flex-direction:column;gap:16px}
+.admin-section-title{font-size:14px;font-weight:800;color:var(--gold);letter-spacing:1px;text-transform:uppercase;border-bottom:1px solid var(--border);padding-bottom:8px}
+.admin-form{display:flex;flex-wrap:wrap;gap:8px;align-items:flex-end}
+.admin-form input,.admin-form select{
+  background:var(--card2);border:1px solid var(--border);border-radius:9px;
+  padding:10px 12px;font-size:13px;color:var(--ink);font-family:'Rubik',sans-serif;outline:none;
+}
+.admin-form input:focus,.admin-form select:focus{border-color:var(--gold)}
+
+.admin-match-row{
+  display:flex;align-items:center;gap:10px;flex-wrap:wrap;
+  background:var(--card);border:1px solid var(--border);border-radius:10px;padding:10px 14px;
+}
+.amr-stage{font-size:10px;font-weight:700;color:var(--muted);background:var(--card2);border-radius:4px;padding:2px 7px}
+.amr-teams{flex:1;font-size:13px;font-weight:600}
+.amr-kickoff{font-size:11px;color:var(--muted)}
+.amr-odds{font-size:12px;color:var(--gold);font-weight:700}
+
+.admin-users-list,.admin-matches-list{display:flex;flex-direction:column;gap:6px}
+.admin-user-row{
+  display:flex;align-items:center;gap:10px;
+  background:var(--card);border:1px solid var(--border);border-radius:10px;padding:10px 14px;
+}
+.aur-avatar{width:32px;height:32px;border-radius:50%;background:var(--goldbg);border:1px solid var(--gold);display:flex;align-items:center;justify-content:center;font-size:13px;font-weight:800;color:var(--gold)}
+.aur-name{flex:1;font-size:14px;font-weight:700}
+.aur-email{font-size:11px;color:var(--muted)}
+.aur-score{font-size:13px;font-weight:700;color:var(--gold)}
+.aur-admin{font-size:10px;background:var(--goldbg);border:1px solid rgba(245,200,66,.3);border-radius:4px;padding:2px 7px;color:var(--gold);font-weight:700}
+.empty-state{color:var(--muted);font-size:13px;text-align:center;padding:20px}
+
+/* Result entry */
+.result-entry-card{background:var(--card);border:1px solid var(--border);border-radius:12px;padding:16px;display:flex;flex-direction:column;gap:10px}
+.rec-teams{font-size:15px;font-weight:700}
+.rec-stage{font-size:10px;color:var(--muted);font-weight:600;text-transform:uppercase;letter-spacing:1px}
+.rec-inputs{display:flex;align-items:center;gap:8px;flex-wrap:wrap}
+.rec-inputs input[type="text"]{flex:1;min-width:120px;background:var(--card2);border:1px solid var(--border);border-radius:8px;padding:9px 12px;font-size:13px;color:var(--ink);font-family:'Rubik',sans-serif;outline:none}
+
+/* Tournament settings */
+.setting-block{background:var(--card);border:1px solid var(--border);border-radius:12px;padding:16px;display:flex;flex-direction:column;gap:10px}
+.setting-block label{font-size:12px;font-weight:700;color:var(--muted);text-transform:uppercase;letter-spacing:1px}
+.setting-row{display:flex;gap:8px;align-items:center}
+.setting-row input,.setting-row select{flex:1;background:var(--card2);border:1px solid var(--border);border-radius:9px;padding:10px 12px;font-size:13px;color:var(--ink);font-family:'Rubik',sans-serif;outline:none}
+.toggle-label{display:flex;align-items:center;gap:8px;font-size:13px;color:var(--muted);cursor:pointer}
+.odds-grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(200px,1fr));gap:6px}
+.odds-team-row{display:flex;align-items:center;gap:8px;font-size:13px}
+.odds-team-row input{width:80px;background:var(--card2);border:1px solid var(--border);border-radius:7px;padding:6px 8px;font-size:13px;color:var(--ink);font-family:'Rubik',sans-serif;outline:none;text-align:center}
+
+/* scrollbar */
+::-webkit-scrollbar{width:4px;height:4px}
+::-webkit-scrollbar-track{background:transparent}
+::-webkit-scrollbar-thumb{background:rgba(255,255,255,.1);border-radius:99px}
+
+@media(max-width:500px){
+  .login-card{padding:32px 24px}
+  .match-teams{flex-direction:column;gap:12px;text-align:center}
+  .team-side,.team-side-b{justify-content:center;flex-direction:column;align-items:center}
+  .champ-grid{grid-template-columns:repeat(3,1fr)}
+}
+</style>
+</head>
+<body>
+<div id="app">
+  <div class="login-page">
+    <div style="color:rgba(255,255,255,.4);font-size:14px">טוען...</div>
+  </div>
+</div>
+</body>
+</html>
